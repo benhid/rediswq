@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: worker-pool
+  name: worker-pool
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: benhid/rediswq:0.1.0
+          imagePullPolicy: Always
+          env:
+            - name: REDIS_HOST
+              value: <redis-host>
+            - name: REDIS_PORT
+              value: "<redis-port>"
+            # When DinD, instruct Docker to use the network connection
+            # instead of the default /var/run/docker.sock socket.
+            - name: DOCKER_HOST
+              value: tcp://localhost:2375
+        - name: dind-daemon
+          image: docker:20.10.23-dind
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          env:
+            # Disabling TLS is not recommended for production use.
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          volumeMounts:
+            - name: dind-storage
+              mountPath: /var/lib/docker
+      volumes:
+        - name: dind-storage
+          emptyDir: { }
+
+---
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scaled-worker-pool
+spec:
+  scaleTargetRef:
+    name: worker-pool
+  pollingInterval: 60
+  cooldownPeriod: 60
+  minReplicaCount: 1
+  maxReplicaCount: 50
+  triggers:
+    - type: redis
+      metadata:
+        address: <redis-host>:<redis-port>
+        listName: job
+        listLength: "5"             # Average target value to trigger scaling actions.
+        databaseIndex: "0"          # optional
+        enableTLS: "false"          # optional
